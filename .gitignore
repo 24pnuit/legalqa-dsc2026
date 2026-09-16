@@ -1,0 +1,14 @@
+# Dữ liệu và chỉ mục tuyệt đối không commit
+data/
+outputs/
+*.jsonl
+*.zip
+*.pkl
+*.bin
+
+# Python cache & môi trường ảo
+__pycache__/
+*.pyc
+.venv/
+env/
+.vscode/
