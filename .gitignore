@@ -9,6 +9,8 @@ outputs/
 # Python cache & môi trường ảo
 __pycache__/
 *.pyc
+.pytest_cache/
+.pytest-tmp/
 .venv/
 env/
 .vscode/
