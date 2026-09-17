@@ -1,114 +1,121 @@
+"""Evaluate LegalQA predictions with METEOR and ROUGE-L."""
+
+from __future__ import annotations
+
 import argparse
 import json
-import os
 from pathlib import Path
+
 import nltk
-from nltk.translate.meteor_score import meteor_score
 import numpy as np
+from nltk.translate.meteor_score import meteor_score
 from rouge_score import rouge_scorer
 
-# Tải gói phụ trợ cho METEOR nếu chưa có
-try:
-  nltk.data.find('corpora/wordnet')
-except LookupError:
-  nltk.download('wordnet', quiet=True)
-  nltk.download('omw-1.4', quiet=True)
+
+def ensure_nltk_resources(download: bool = False) -> None:
+    """Require METEOR resources without network I/O during module import."""
+    missing = []
+    for resource in ("wordnet", "omw-1.4"):
+        try:
+            nltk.data.find(f"corpora/{resource}")
+        except LookupError:
+            missing.append(resource)
+    if missing and download:
+        for resource in missing:
+            if not nltk.download(resource, quiet=True):
+                raise RuntimeError(f"Failed to download NLTK resource: {resource}")
+        return
+    if missing:
+        names = " ".join(missing)
+        raise RuntimeError(
+            f"Missing NLTK resources: {names}. Run "
+            f"python -m nltk.downloader {names} or pass --download-nltk-data."
+        )
 
 
-def read_json(file_path):
-  with open(file_path, 'r', encoding='utf-8') as f:
-    return json.load(f)
+def read_json(file_path: str | Path):
+    with open(file_path, "r", encoding="utf-8") as stream:
+        return json.load(stream)
 
 
 def eval_qa(y_pred_raw, y_true_raw):
-  """Hàm tính điểm chuẩn xác 100% theo mã nguồn scoring.py của BTC UIT DSC 2026."""
-  rouge_scoring = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=False)
+    """Calculate metrics using the tokenization behavior of the provided scorer."""
+    rouge_scoring = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=False)
 
-  # BTC không dùng word segmentation
-  def build_in_tokenizer(string_sent):
-    return string_sent
+    def normalize_answers(raw):
+        return {
+            key: value["answer"]
+            if isinstance(value, dict) and "answer" in value
+            else str(value)
+            for key, value in raw.items()
+        }
 
-  # Chuẩn hóa format y_pred: {qid: answer_text}
-  y_pred = {}
-  for k, v in y_pred_raw.items():
-    if isinstance(v, dict) and 'answer' in v:
-      y_pred[k] = v['answer']
-    else:
-      y_pred[k] = str(v)
+    y_pred = normalize_answers(y_pred_raw)
+    y_true = normalize_answers(y_true_raw)
+    if set(y_pred) != set(y_true):
+        missing = sorted(set(y_true) - set(y_pred))
+        extra = sorted(set(y_pred) - set(y_true))
+        raise ValueError(
+            "Prediction IDs must exactly match reference IDs; "
+            f"missing={missing[:5]} extra={extra[:5]}"
+        )
 
-  # Chuẩn hóa format y_true
-  y_true = {}
-  for k, v in y_true_raw.items():
-    if isinstance(v, dict) and 'answer' in v:
-      y_true[k] = v['answer']
-    else:
-      y_true[k] = str(v)
+    meteor_values = []
+    rouge_values = []
+    for qid in y_true:
+        reference = str(y_true[qid])
+        prediction = str(y_pred[qid])
+        reference_tokens = reference.split()
+        prediction_tokens = prediction.split()
+        meteor_values.append(
+            meteor_score([reference_tokens], prediction_tokens)
+            if prediction_tokens
+            else 0.0
+        )
+        rouge_values.append(
+            rouge_scoring.score(reference, prediction)["rougeL"].fmeasure
+        )
 
-  ids_preds = list(y_pred.keys())
-  ids_truth = list(y_true.keys())
+    return {
+        "meteor": float(np.mean(meteor_values)) if meteor_values else 0.0,
+        "rouge": float(np.mean(rouge_values)) if rouge_values else 0.0,
+        "evaluated": len(y_true),
+    }
 
-  common_ids = [qid for qid in ids_truth if qid in y_pred]
 
-  if len(common_ids) != len(ids_truth):
-    print(
-        f'[CẢNH BÁO] Số mẫu dự đoán ({len(common_ids)}) không khớp hoàn toàn'
-        f' với tập mẫu ({len(ids_truth)})!'
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--ref", default="data/splits/val_reference.json", help="Reference JSON"
     )
+    parser.add_argument("--pred", required=True, help="Prediction JSON")
+    parser.add_argument("--out", type=Path, help="Optional metrics JSON output")
+    parser.add_argument(
+        "--download-nltk-data",
+        action="store_true",
+        help="Allow downloading WordNet/OMW if missing",
+    )
+    args = parser.parse_args()
 
-  meteor_list = []
-  rouge_list = []
+    ensure_nltk_resources(download=args.download_nltk_data)
+    result = eval_qa(read_json(args.pred), read_json(args.ref))
 
-  for k in common_ids:
-    ref_tokens = build_in_tokenizer(str(y_true[k])).split()
-    pred_tokens = build_in_tokenizer(str(y_pred[k])).split()
+    print("\n" + "=" * 45)
+    print("      KẾT QUẢ ĐÁNH GIÁ NỘI BỘ (LOCAL)")
+    print("=" * 45)
+    print(f'Số lượng câu hỏi khớp : {result["evaluated"]}')
+    print(f'METEOR (Độ đo chính)  : {result["meteor"]:.6f}')
+    print(f'ROUGE-L (Độ đo phụ)   : {result["rouge"]:.6f}')
+    print("=" * 45 + "\n")
 
-    # 1. METEOR
-    m_val = meteor_score([ref_tokens], pred_tokens) if pred_tokens else 0.0
-    meteor_list.append(m_val)
-
-    # 2. ROUGE-L
-    r_val = rouge_scoring.score(
-        build_in_tokenizer(str(y_true[k])), build_in_tokenizer(str(y_pred[k]))
-    )['rougeL'].fmeasure
-    rouge_list.append(r_val)
-
-  meteor_mean = float(np.mean(meteor_list)) if meteor_list else 0.0
-  rouge_mean = float(np.mean(rouge_list)) if rouge_list else 0.0
-
-  return {'meteor': meteor_mean, 'rouge': rouge_mean, 'evaluated': len(common_ids)}
-
-
-def main():
-  parser = argparse.ArgumentParser(
-      description='Đánh giá Local Task 2 LegalQA chuẩn BTC'
-  )
-  parser.add_argument(
-      '--ref',
-      type=str,
-      default='data/splits/val_reference.json',
-      help='Đường dẫn file tham chiếu',
-  )
-  parser.add_argument(
-      '--pred',
-      type=str,
-      required=True,
-      help='Đường dẫn file dự đoán (submission.json)',
-  )
-  args = parser.parse_args()
-
-  truth = read_json(args.ref)
-  preds = read_json(args.pred)
-
-  res = eval_qa(preds, truth)
-
-  print('\n' + '=' * 45)
-  print('      KẾT QUẢ ĐÁNH GIÁ NỘI BỘ (LOCAL)')
-  print('=' * 45)
-  print(f'Số lượng câu hỏi khớp : {res["evaluated"]}')
-  print(f"METEOR (Độ đo chính)  : {res['meteor']:.6f}")
-  print(f"ROUGE-L (Độ đo phụ)   : {res['rouge']:.6f}")
-  print('=' * 45 + '\n')
+    if args.out is not None:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Wrote {args.out}")
 
 
-if __name__ == '__main__':
-  main()
+if __name__ == "__main__":
+    main()

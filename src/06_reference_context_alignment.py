@@ -6,6 +6,8 @@ import unicodedata
 from collections import Counter
 import bm25s
 
+from bm25_utils import tokenize_queries
+
 INDEX_DIR = "data/bm25_index"
 TRAIN_PATH = "data/raw/train.json"
 OUT_PATH = "data/alignment_results.jsonl"
@@ -54,7 +56,7 @@ def main():
     end = int(sys.argv[2]) if len(sys.argv) > 2 else 7000
 
     t0 = time.time()
-    retriever = bm25s.BM25.load(INDEX_DIR, load_corpus=True)
+    retriever = bm25s.BM25.load(INDEX_DIR, load_corpus=True, mmap=True)
     chunks = retriever.corpus
     print(f"Loaded BM25 index ({len(chunks)} chunks) in {time.time()-t0:.1f}s", flush=True)
 
@@ -69,13 +71,13 @@ def main():
 
     # --- Step 1: retrieve candidate evidence chunks using the ANSWER as query ---
     t0 = time.time()
-    ans_tokens_bm25 = bm25s.tokenize(answers, stopwords=None, token_pattern=TOKEN_PATTERN, show_progress=False)
+    ans_tokens_bm25 = tokenize_queries(answers)
     ans_results, ans_scores = retriever.retrieve(ans_tokens_bm25, corpus=chunks, k=TOP_K_ANSWER, show_progress=False)
     print(f"Answer-as-query retrieval done in {time.time()-t0:.1f}s", flush=True)
 
     # --- Step 2: retrieve using the QUESTION as query (for recall check later) ---
     t0 = time.time()
-    q_tokens_bm25 = bm25s.tokenize(questions, stopwords=None, token_pattern=TOKEN_PATTERN, show_progress=False)
+    q_tokens_bm25 = tokenize_queries(questions)
     q_results, q_scores = retriever.retrieve(q_tokens_bm25, corpus=chunks, k=TOP_K_QUESTION, show_progress=False)
     print(f"Question-as-query retrieval done in {time.time()-t0:.1f}s", flush=True)
 

@@ -4,8 +4,10 @@ import unicodedata
 import bm25s
 import time
 
+from bm25_utils import tokenize_queries
+
 INDEX_DIR = "data/bm25_index"
-PUBLIC_PATH = "PUBLIC_PATH = "data/raw/public-official.json"
+PUBLIC_PATH = "data/raw/public-official.json"
 OUT_PATH = "data/submission.json"
 
 TOKEN_PATTERN = r"[0-9a-zA-ZÀ-ỹà-ỹ]+"
@@ -29,7 +31,7 @@ def build_extractive_answer(top_docs):
 def main():
     print("Loading BM25 index...", flush=True)
     t0 = time.time()
-    retriever = bm25s.BM25.load(INDEX_DIR, load_corpus=True)
+    retriever = bm25s.BM25.load(INDEX_DIR, load_corpus=True, mmap=True)
     chunks = retriever.corpus
     print(f"Loaded index with {len(chunks)} chunks in {time.time()-t0:.1f}s", flush=True)
 
@@ -41,7 +43,7 @@ def main():
     t0 = time.time()
     qids = list(public_qs.keys())
     questions = [public_qs[qid]["question"] for qid in qids]
-    q_tokens = bm25s.tokenize(questions, stopwords=None, token_pattern=TOKEN_PATTERN, show_progress=False)
+    q_tokens = tokenize_queries(questions)
     results, scores = retriever.retrieve(q_tokens, corpus=chunks, k=3, show_progress=False)
 
     for i, qid in enumerate(qids):
