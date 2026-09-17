@@ -44,7 +44,9 @@ def load_candidates_from_bm25_fallback(bm25_index_dir, public_path, k=3):
     """Fallback: tự retrieve BM25 top-k trực tiếp (dùng khi chưa có file candidates)."""
     import bm25s
 
-    retriever = bm25s.BM25.load(bm25_index_dir, load_corpus=True)
+    from bm25_utils import tokenize_queries
+
+    retriever = bm25s.BM25.load(bm25_index_dir, load_corpus=True, mmap=True)
     chunks = retriever.corpus
 
     with open(public_path, encoding="utf-8") as f:
@@ -52,10 +54,7 @@ def load_candidates_from_bm25_fallback(bm25_index_dir, public_path, k=3):
 
     qids = list(public_qs.keys())
     questions = [public_qs[qid]["question"] for qid in qids]
-    q_tokens = bm25s.tokenize(
-        questions, stopwords=None,
-        token_pattern=r"[0-9a-zA-ZÀ-ỹà-ỹ]+", show_progress=False,
-    )
+    q_tokens = tokenize_queries(questions)
     results, scores = retriever.retrieve(q_tokens, corpus=chunks, k=k, show_progress=False)
 
     out = {}
